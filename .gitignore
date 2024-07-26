@@ -106,4 +106,7 @@ venv.bak/
 # data
 data/linear/ER_laplace/*
 
+# results
+casper_ob_*
+
 # codes
