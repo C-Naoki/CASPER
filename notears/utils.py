@@ -1,9 +1,11 @@
+import random
+
+import cdt
+import igraph as ig
+import networkx as nx
 import numpy as np
 from scipy.special import expit as sigmoid
-import igraph as ig
-import random
-import cdt
-import networkx as nx
+
 
 def set_random_seed(seed):
     random.seed(seed)
@@ -26,6 +28,7 @@ def simulate_dag(d, s0, graph_type):
     Returns:
         B (np.ndarray): [d, d] binary adj matrix of DAG
     """
+
     def _random_permutation(M):
         # np.random.permutation permutes first axis only
         P = np.random.permutation(np.eye(M.shape[0]))
@@ -40,25 +43,24 @@ def simulate_dag(d, s0, graph_type):
 
     def _graph_to_adjmat(G):
         # fangfu: 将图转化为邻接矩阵
-        return np.array(G.get_adjacency().data) 
+        return np.array(G.get_adjacency().data)
 
-    if graph_type == 'ER':
+    if graph_type == "ER":
         # Erdos-Renyi
         G_und = ig.Graph.Erdos_Renyi(n=d, m=s0)
         B_und = _graph_to_adjmat(G_und)
         B = _random_acyclic_orientation(B_und)
-    elif graph_type == 'SF':
+    elif graph_type == "SF":
         # Scale-free, Barabasi-Albert
         G = ig.Graph.Barabasi(n=d, m=int(round(s0 / d)), directed=True)
         B = _graph_to_adjmat(G)
-    elif graph_type == 'BP':
+    elif graph_type == "BP":
         # Bipartite, Sec 4.1 of (Gu, Fu, Zhou, 2018)
         top = int(0.2 * d)
-        G = ig.Graph.Random_Bipartite(
-            top, d - top, m=s0, directed=True, neimode=ig.OUT)
+        G = ig.Graph.Random_Bipartite(top, d - top, m=s0, directed=True, neimode=ig.OUT)
         B = _graph_to_adjmat(G)
     else:
-        raise ValueError('unknown graph type')
+        raise ValueError("unknown graph type")
     B_perm = _random_permutation(B)
     assert ig.Graph.Adjacency(B_perm.tolist()).is_dag()
     return B_perm
@@ -96,26 +98,27 @@ def simulate_linear_sem(W, n, sem_type, noise_scale=None):
     Returns:
         X (np.ndarray): [n, d] sample matrix, [d, d] if n=inf
     """
+
     def _simulate_single_equation(X, w, scale):
         """X: [n, num of parents], w: [num of parents], x: [n]"""
-        if sem_type == 'gauss':
+        if sem_type == "gauss":
             z = np.random.normal(scale=scale, size=n)
             x = X @ w + z
-        elif sem_type == 'exp':
+        elif sem_type == "exp":
             z = np.random.exponential(scale=scale, size=n)
             x = X @ w + z
-        elif sem_type == 'gumbel':
+        elif sem_type == "gumbel":
             z = np.random.gumbel(scale=scale, size=n)
             x = X @ w + z
-        elif sem_type == 'uniform':
+        elif sem_type == "uniform":
             z = np.random.uniform(low=-scale, high=scale, size=n)
             x = X @ w + z
-        elif sem_type == 'logistic':
+        elif sem_type == "logistic":
             x = np.random.binomial(1, sigmoid(X @ w)) * 1.0
-        elif sem_type == 'poisson':
+        elif sem_type == "poisson":
             x = np.random.poisson(np.exp(X @ w)) * 1.0
         else:
-            raise ValueError('unknown sem type')
+            raise ValueError("unknown sem type")
         return x
 
     d = W.shape[0]
@@ -125,17 +128,17 @@ def simulate_linear_sem(W, n, sem_type, noise_scale=None):
         scale_vec = noise_scale * np.ones(d)
     else:
         if len(noise_scale) != d:
-            raise ValueError('noise scale must be a scalar or has length d')
+            raise ValueError("noise scale must be a scalar or has length d")
         scale_vec = noise_scale
     if not is_dag(W):
-        raise ValueError('W must be a DAG')
+        raise ValueError("W must be a DAG")
     if np.isinf(n):  # population risk for linear gauss SEM
-        if sem_type == 'gauss':
+        if sem_type == "gauss":
             # make 1/d X'X = true cov
-            X = np.sqrt(d) * np.diag(scale_vec) @ np.linalg.inv(np.eye(d) - W) 
+            X = np.sqrt(d) * np.diag(scale_vec) @ np.linalg.inv(np.eye(d) - W)
             return X
         else:
-            raise ValueError('population risk not available')
+            raise ValueError("population risk not available")
     # empirical risk
     G = ig.Graph.Weighted_Adjacency(W.tolist())
     ordered_vertices = G.topological_sorting()
@@ -143,37 +146,39 @@ def simulate_linear_sem(W, n, sem_type, noise_scale=None):
     X = np.zeros([n, d])
     for j in ordered_vertices:
         parents = G.neighbors(j, mode=ig.IN)
-        X[:, j] = _simulate_single_equation(
-            X[:, parents], W[parents, j], scale_vec[j])
+        X[:, j] = _simulate_single_equation(X[:, parents], W[parents, j], scale_vec[j])
     return X
 
 
-def simulate_nonlinear_sem(B, n, sem_type, noise_scale = None): # 生成非线性的SEM
+def simulate_nonlinear_sem(B, n, sem_type, noise_scale=None):  # 生成非线性的SEM
     """Simulate samples from nonlinear SEM.
 
     Args:
         B (np.ndarray): [d, d] binary adj matrix of DAG
         n (int): num of samples
         sem_type (str): mlp, mim, gp, gp-add
-        noise_scale (np.ndarray): scale parameter of additive noise, default all ones 
+        noise_scale (np.ndarray): scale parameter of additive noise, default all ones
 
     Returns:
         X (np.ndarray): [n, d] sample matrix
     """
+
     def _simulate_single_equation(X, scale):
         """X: [n, num of parents], x: [n]"""
-        z = np.random.normal(scale=scale, size=n) # 作用是生成噪声，np.random.normal的参数是均值和标准差
+        z = np.random.normal(
+            scale=scale, size=n
+        )  # 作用是生成噪声，np.random.normal的参数是均值和标准差
         pa_size = X.shape[1]
         if pa_size == 0:
             return z
-        if sem_type == 'mlp':
+        if sem_type == "mlp":
             hidden = 100
             W1 = np.random.uniform(low=0.5, high=2.0, size=[pa_size, hidden])
             W1[np.random.rand(*W1.shape) < 0.5] *= -1
             W2 = np.random.uniform(low=0.5, high=2.0, size=hidden)
             W2[np.random.rand(hidden) < 0.5] *= -1
             x = sigmoid(X @ W1) @ W2 + z
-        elif sem_type == 'mim':  
+        elif sem_type == "mim":
             w1 = np.random.uniform(low=0.5, high=2.0, size=pa_size)
             w1[np.random.rand(pa_size) < 0.5] *= -1
             w2 = np.random.uniform(low=0.5, high=2.0, size=pa_size)
@@ -181,24 +186,35 @@ def simulate_nonlinear_sem(B, n, sem_type, noise_scale = None): # 生成非线�
             w3 = np.random.uniform(low=0.5, high=2.0, size=pa_size)
             w3[np.random.rand(pa_size) < 0.5] *= -1
             x = np.tanh(X @ w1) + np.cos(X @ w2) + np.sin(X @ w3) + z
-        elif sem_type == 'gp':
+        elif sem_type == "gp":
             from sklearn.gaussian_process import GaussianProcessRegressor
+
             gp = GaussianProcessRegressor()
             x = gp.sample_y(X, random_state=None).flatten() + z
-        elif sem_type == 'gp-add':
+        elif sem_type == "gp-add":
             from sklearn.gaussian_process import GaussianProcessRegressor
+
             gp = GaussianProcessRegressor()
-            x = sum([gp.sample_y(X[:, i, None], random_state=None).flatten()
-                     for i in range(X.shape[1])]) + z
+            x = (
+                sum(
+                    [
+                        gp.sample_y(X[:, i, None], random_state=None).flatten()
+                        for i in range(X.shape[1])
+                    ]
+                )
+                + z
+            )
         else:
-            raise ValueError('unknown sem type')
+            raise ValueError("unknown sem type")
         return x
 
     d = B.shape[0]
     scale_vec = noise_scale if noise_scale else np.ones(d)
     X = np.zeros([n, d])
-    G = ig.Graph.Adjacency(B.tolist()) # 将B转化为邻接矩阵
-    ordered_vertices = G.topological_sorting() # topological_sorting 是按照拓扑排序的，返回一个列表
+    G = ig.Graph.Adjacency(B.tolist())  # 将B转化为邻接矩阵
+    ordered_vertices = (
+        G.topological_sorting()
+    )  # topological_sorting 是按照拓扑排序的，返回一个列表
     assert len(ordered_vertices) == d
     for j in ordered_vertices:
         parents = G.neighbors(j, mode=ig.IN)
@@ -206,13 +222,11 @@ def simulate_nonlinear_sem(B, n, sem_type, noise_scale = None): # 生成非线�
     return X
 
 
-    
-
 def count_accuracy(B_true, B_est):  # B_est是预测的结果
     """Compute various accuracy metrics for B_est.
 
     true positive = predicted association exists in condition in correct direction # TP
-    reverse = predicted association exists in condition in opposite direction 
+    reverse = predicted association exists in condition in opposite direction
     false positive = predicted association does not exist in condition # FN
 
     Args:
@@ -229,20 +243,22 @@ def count_accuracy(B_true, B_est):  # B_est是预测的结果
 
     # cpdag .any()的意思：查看是否有-1，有的话返回true， B_est的维度是[d, d]
     if (B_est == -1).any():
-        if not ((B_est == 0) | (B_est == 1) | (B_est == -1)).all():  # 如果B_est中有其他的值，那么就报错
-            raise ValueError('B_est should take value in {0,1,-1}')
+        if not (
+            (B_est == 0) | (B_est == 1) | (B_est == -1)
+        ).all():  # 如果B_est中有其他的值，那么就报错
+            raise ValueError("B_est should take value in {0,1,-1}")
         if ((B_est == -1) & (B_est.T == -1)).any():
-            raise ValueError('undirected edge should only appear once')
+            raise ValueError("undirected edge should only appear once")
     else:  # dag
         if not ((B_est == 0) | (B_est == 1)).all():
-            raise ValueError('B_est should take value in {0,1}')
+            raise ValueError("B_est should take value in {0,1}")
         if not is_dag(B_est):
-            raise ValueError('B_est should be a DAG')
+            raise ValueError("B_est should be a DAG")
     d = B_true.shape[0]  # d是结果的维度
     # linear index of nonzeros
     pred_und = np.flatnonzero(B_est == -1)  # pred_und是预测的结果中的-1的索引
-    pred = np.flatnonzero(B_est == 1)      # pred是预测的结果中的1的索引
-    cond = np.flatnonzero(B_true)          # cond是真实的结果中的1的索引
+    pred = np.flatnonzero(B_est == 1)  # pred是预测的结果中的1的索引
+    cond = np.flatnonzero(B_true)  # cond是真实的结果中的1的索引
     cond_reversed = np.flatnonzero(B_true.T)  # cond_reversed是真实的结果中的-1的索引
     # cond_skeleton是真实的结果中的1和-1的索引
     cond_skeleton = np.concatenate([cond, cond_reversed])
@@ -273,12 +289,19 @@ def count_accuracy(B_true, B_est):  # B_est是预测的结果
     extra_lower = np.setdiff1d(pred_lower, cond_lower, assume_unique=True)
     missing_lower = np.setdiff1d(cond_lower, pred_lower, assume_unique=True)
     shd = len(extra_lower) + len(missing_lower) + len(reverse)
-    
+
     sid = float(cdt.metrics.SID(target=B_true, pred=B_est))
-    return {'fdr': fdr, 'tpr': tpr, 'fpr': fpr, 'shd': shd, 'sid':sid, 'nnz': pred_size}
+    return {
+        "fdr": fdr,
+        "tpr": tpr,
+        "fpr": fpr,
+        "shd": shd,
+        "sid": sid,
+        "nnz": pred_size,
+    }
 
 
 def get_sachs_gt():
-    data, graph = cdt.data.load_dataset('sachs')
+    data, graph = cdt.data.load_dataset("sachs")
     a = nx.adj_matrix(graph).todense()
     return a

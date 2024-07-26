@@ -1,6 +1,6 @@
-import torch
 import numpy as np
 import scipy.linalg as slin
+import torch
 
 
 class TraceExpm(torch.autograd.Function):
@@ -15,7 +15,7 @@ class TraceExpm(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        E, = ctx.saved_tensors
+        (E,) = ctx.saved_tensors
         grad_input = grad_output * E.t()
         return grad_input
 
@@ -27,13 +27,13 @@ def main():
     input = torch.randn(20, 20, dtype=torch.double, requires_grad=True)
     assert torch.autograd.gradcheck(trace_expm, input)
 
-    input = torch.tensor([[1, 2], [3, 4.]], requires_grad=True)
+    input = torch.tensor([[1, 2], [3, 4.0]], requires_grad=True)
     tre = trace_expm(input)
     f = 0.5 * tre * tre
-    print('f\n', f.item())
+    print("f\n", f.item())
     f.backward()
-    print('grad\n', input.grad)
+    print("grad\n", input.grad)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

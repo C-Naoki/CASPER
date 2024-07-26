@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "casper"
+version = "0.1.0"
+description = ""
+authors = ["naoki <u429561d@ecs.osaka-u.ac.jp>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "3.9.15"
+numpy = "^2.0.1"
+scipy = "<1.14.0"
+torch = "^2.3.1"
+tqdm = "^4.66.4"
+igraph = "^0.11.6"
+cdt = "^0.6.0"
+configargparse = "^1.7"
+matplotlib = "^3.9.1"
+ipykernel = "^6.29.5"
+
+
+[[tool.poetry.source]]
+name = "torch_cu117"
+url = "https://download.pytorch.org/whl/cu117"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

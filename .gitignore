@@ -103,4 +103,7 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# data
+data/linear/ER_laplace/*
+
 # codes

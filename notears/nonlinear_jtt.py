@@ -1,17 +1,18 @@
 # from notears.locally_connected import LocallyConnected
 # from notears.lbfgsb_scipy import LBFGSBScipy
 # from notears.trace_expm import trace_expm
-from locally_connected import LocallyConnected
-from lbfgsb_scipy import LBFGSBScipy
-from utils import get_sachs_gt
-from trace_expm import trace_expm
+import math
+
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-import math
 import tqdm as tqdm
-from runhelper import *
-from loss_func import *
+from lbfgsb_scipy import LBFGSBScipy
+from locally_connected import LocallyConnected
+from loss_func import squared_loss, single_loss, reweighted_loss
+from runhelper import config_parser
+from trace_expm import trace_expm
+
 
 class NotearsMLP(nn.Module):
     def __init__(self, dims, bias=True):
@@ -27,9 +28,8 @@ class NotearsMLP(nn.Module):
         self.fc1_neg.weight.bounds = self._bounds()
         # fc2: local linear layers
         layers = []
-        for l in range(len(dims) - 2):
-            layers.append(LocallyConnected(
-                d, dims[l + 1], dims[l + 2], bias=bias))
+        for i in range(len(dims) - 2):
+            layers.append(LocallyConnected(d, dims[i + 1], dims[i + 2], bias=bias))
         self.fc2 = nn.ModuleList(layers)
 
     def _bounds(self):
@@ -69,11 +69,11 @@ class NotearsMLP(nn.Module):
 
     def l2_reg(self):
         """Take 2-norm-squared of all parameters"""
-        reg = 0.
+        reg = 0.0
         fc1_weight = self.fc1_pos.weight - self.fc1_neg.weight  # [j * m1, i]
-        reg += torch.sum(fc1_weight ** 2)
+        reg += torch.sum(fc1_weight**2)
         for fc in self.fc2:
-            reg += torch.sum(fc.weight ** 2)
+            reg += torch.sum(fc.weight**2)
         return reg
 
     def fc1_l1_reg(self):
@@ -132,7 +132,7 @@ class NotearsSobolev(nn.Module):
     def forward(self, x):  # [n, d] -> [n, d]
         bases = self.sobolev_basis(x)  # [n, dk]
         x = self.fc1_pos(bases) - self.fc1_neg(bases)  # [n, d]
-        self.l2_reg_store = torch.sum(x ** 2) / x.shape[0]
+        self.l2_reg_store = torch.sum(x**2) / x.shape[0]
         return x
 
     def h_func(self):
@@ -170,6 +170,7 @@ def dual_ascent_step(model, X, lambda1, lambda2, rho, alpha, h, rho_max):
     optimizer = LBFGSBScipy(model.parameters())
     X_torch = torch.from_numpy(X)
     while rho < rho_max:
+
         def closure():
             optimizer.zero_grad()
             X_hat = model(X_torch)
@@ -181,6 +182,7 @@ def dual_ascent_step(model, X, lambda1, lambda2, rho, alpha, h, rho_max):
             primal_obj = loss + penalty + l2_reg + l1_reg
             primal_obj.backward()
             return primal_obj
+
         optimizer.step(closure)  # NOTE: updates model in-place
         with torch.no_grad():
             h_new = model.h_func().item()
@@ -192,34 +194,43 @@ def dual_ascent_step(model, X, lambda1, lambda2, rho, alpha, h, rho_max):
     return rho, alpha, h_new
 
 
-def notears_nonlinear(model: nn.Module,
-                      X: np.ndarray,
-                      lambda1: float = 0.,
-                      lambda2: float = 0.,
-                      max_iter: int = 100,
-                      h_tol: float = 1e-8,
-                      rho_max: float = 1e+16,
-                      w_threshold: float = 0.3):
+def notears_nonlinear(
+    model: nn.Module,
+    X: np.ndarray,
+    lambda1: float = 0.0,
+    lambda2: float = 0.0,
+    max_iter: int = 100,
+    h_tol: float = 1e-8,
+    rho_max: float = 1e16,
+    w_threshold: float = 0.3,
+):
     rho, alpha, h = 1.0, 0.0, np.inf
     for _ in tqdm.tqdm(range(max_iter)):
-        rho, alpha, h = dual_ascent_step(model, X, lambda1, lambda2,
-                                         rho, alpha, h, rho_max)
+        rho, alpha, h = dual_ascent_step(
+            model, X, lambda1, lambda2, rho, alpha, h, rho_max
+        )
         if h <= h_tol or rho >= rho_max:
             break
     W_est = model.fc1_to_adj()
     W_est[np.abs(W_est) < w_threshold] = 0
     return W_est
 
-def dual_ascent_step_reweight(model, X, lambda1, lambda2, rho, alpha, h, rho_max, reweight_list = None, beta=1):
+
+def dual_ascent_step_reweight(
+    model, X, lambda1, lambda2, rho, alpha, h, rho_max, reweight_list=None, beta=1
+):
     """Perform one step of dual ascent in augmented Lagrangian."""
     h_new = None
     optimizer = LBFGSBScipy(model.parameters())
     X_torch = torch.from_numpy(X)
     while rho < rho_max:
+
         def closure():
             optimizer.zero_grad()
             X_hat = model(X_torch)
-            loss = reweighted_loss(X_hat, X_torch, beta=beta, reweight_list=reweight_list)
+            loss = reweighted_loss(
+                X_hat, X_torch, beta=beta, reweight_list=reweight_list
+            )
             h_val = model.h_func()
             penalty = 0.5 * rho * h_val * h_val + alpha * h_val
             l2_reg = 0.5 * lambda2 * model.l2_reg()
@@ -227,6 +238,7 @@ def dual_ascent_step_reweight(model, X, lambda1, lambda2, rho, alpha, h, rho_max
             primal_obj = loss + penalty + l2_reg + l1_reg
             primal_obj.backward()
             return primal_obj
+
         optimizer.step(closure)  # NOTE: updates model in-place
         with torch.no_grad():
             h_new = model.h_func().item()
@@ -237,33 +249,49 @@ def dual_ascent_step_reweight(model, X, lambda1, lambda2, rho, alpha, h, rho_max
     alpha += rho * h_new
     return rho, alpha, h_new
 
-def notears_nonlinear_reweight(model: nn.Module,
-                          X: np.ndarray,
-                          lambda1: float = 0.,
-                          lambda2: float = 0.,
-                          max_iter: int = 100,
-                          h_tol: float = 1e-8,
-                          rho_max: float = 1e+16,
-                          w_threshold: float = 0.3,
-                          beta = 1,
-                          reweight_epoch=100):
 
+def notears_nonlinear_reweight(
+    model: nn.Module,
+    X: np.ndarray,
+    lambda1: float = 0.0,
+    lambda2: float = 0.0,
+    max_iter: int = 100,
+    h_tol: float = 1e-8,
+    rho_max: float = 1e16,
+    w_threshold: float = 0.3,
+    beta=1,
+    reweight_epoch=100,
+):
     rho, alpha, h = 1.0, 0.0, np.inf
     reweight_list = []
     for epoch in tqdm.tqdm(range(max_iter)):
         if epoch < reweight_epoch:
-            rho, alpha, h = dual_ascent_step(model, X, lambda1, lambda2,
-                                         rho, alpha, h, rho_max)
+            rho, alpha, h = dual_ascent_step(
+                model, X, lambda1, lambda2, rho, alpha, h, rho_max
+            )
         elif epoch == reweight_epoch:
             X_torch = torch.from_numpy(X)
             loss_record = single_loss(model(X_torch), X_torch)
             each_loss = torch.sum(loss_record, dim=1)
             each_loss = each_loss.cpu().detach().numpy()
             each_loss_idx = each_loss.argsort()
-            reweight_list = each_loss_idx[:int(len(each_loss_idx) * 0.1)]
-            rho, alpha, h = dual_ascent_step(model, X, lambda1, lambda2, rho, alpha, h, rho_max)
+            reweight_list = each_loss_idx[: int(len(each_loss_idx) * 0.1)]
+            rho, alpha, h = dual_ascent_step(
+                model, X, lambda1, lambda2, rho, alpha, h, rho_max
+            )
         else:
-            rho, alpha, h = dual_ascent_step_reweight(model, X, lambda1, lambda2, rho, alpha, h, rho_max, reweight_list=reweight_list, beta = beta)
+            rho, alpha, h = dual_ascent_step_reweight(
+                model,
+                X,
+                lambda1,
+                lambda2,
+                rho,
+                alpha,
+                h,
+                rho_max,
+                reweight_list=reweight_list,
+                beta=beta,
+            )
         if h <= h_tol or rho >= rho_max:
             break
     W_est = model.fc1_to_adj()
@@ -276,12 +304,13 @@ def main():
     parser = config_parser()
     args = parser.parse_args()
     print(args)
-    print('==' * 20)
+    print("==" * 20)
 
     torch.set_default_dtype(torch.double)
     np.set_printoptions(precision=3)
 
     import utils as ut
+
     ut.set_random_seed(args.seed)
 
     # B_true = ut.simulate_dag(args.d, args.s0, args.graph_type)
@@ -291,8 +320,10 @@ def main():
     # np.savetxt('X.csv', X, delimiter=',')
     # X = np.loadtxt('X.csv', delimiter=',')
 
-    X = np.loadtxt('/opt/data2/git_fangfu/JTT_CD/data/sachs.csv', delimiter=',')
-    B_true = np.loadtxt('/opt/data2/git_fangfu/JTT_CD/data/sachs_B_true.csv', delimiter=',')
+    X = np.loadtxt("/opt/data2/git_fangfu/JTT_CD/data/sachs.csv", delimiter=",")
+    B_true = np.loadtxt(
+        "/opt/data2/git_fangfu/JTT_CD/data/sachs_B_true.csv", delimiter=","
+    )
 
     model = NotearsMLP(dims=[args.d, 10, 1], bias=True)
 
@@ -300,20 +331,27 @@ def main():
     assert ut.is_dag(W_est)
     # np.savetxt('W_est.csv', W_est, delimiter=',')
     acc = ut.count_accuracy(B_true, W_est != 0)
-    print(f'the result w/o reweighting: {acc}')
+    print(f"the result w/o reweighting: {acc}")
     # 将上述打印的内容写入logs文件中
-    with open('/opt/data2/git_fangfu/notears/logs/log1.txt', 'a') as f:
-        f.write(f'{acc}\n')
+    with open("/opt/data2/git_fangfu/notears/logs/log1.txt", "a") as f:
+        f.write(f"{acc}\n")
 
     if args.reweight:
-        print('reweighting')
-        W_est = notears_nonlinear_reweight(model, X, args.lambda1, args.lambda2, beta = args.beta, reweight_epoch=args.reweight_epoch)
+        print("reweighting")
+        W_est = notears_nonlinear_reweight(
+            model,
+            X,
+            args.lambda1,
+            args.lambda2,
+            beta=args.beta,
+            reweight_epoch=args.reweight_epoch,
+        )
         assert ut.is_dag(W_est)
         acc_jtt = ut.count_accuracy(B_true, W_est != 0)
-        print(f'the result w/ reweighting: {acc_jtt}')
-        with open('/opt/data2/git_fangfu/notears/logs/log1.txt', 'a') as f:
-            f.write(f'{acc}\n')
+        print(f"the result w/ reweighting: {acc_jtt}")
+        with open("/opt/data2/git_fangfu/notears/logs/log1.txt", "a") as f:
+            f.write(f"{acc}\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
