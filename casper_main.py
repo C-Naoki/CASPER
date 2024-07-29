@@ -10,10 +10,10 @@ import torch.optim as optim
 import torch.utils.data as data
 import tqdm as tqdm
 
-import notears.utils as ut
-from notears.lbfgsb_scipy import LBFGSBScipy
-from notears.locally_connected import LocallyConnected
-from notears.loss_func import squared_loss
+import casper_notears.utils as ut
+from casper_notears.lbfgsb_scipy import LBFGSBScipy
+from casper_notears.locally_connected import LocallyConnected
+from casper_notears.loss_func import squared_loss
 from runhelps.runhelper import config_parser
 
 COUNT = 0
